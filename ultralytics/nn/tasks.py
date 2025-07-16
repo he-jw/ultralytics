@@ -92,6 +92,7 @@ from ultralytics.utils.torch_utils import (
     smart_inference_mode,
     time_sync,
 )
+from ultralytics.nn.modules.block import C3CBAM
 
 
 class BaseModel(torch.nn.Module):
@@ -1644,6 +1645,7 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            C3CBAM,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1663,6 +1665,7 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
+            C3CBAM,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args

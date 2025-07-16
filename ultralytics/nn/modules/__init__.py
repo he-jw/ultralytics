@@ -59,6 +59,8 @@ from .block import (
     ResNetLayer,
     SCDown,
     TorchVision,
+    C3CBAM,
+    CBAM,
 )
 from .conv import (
     CBAM,
@@ -179,4 +181,6 @@ __all__ = (
     "TorchVision",
     "Index",
     "A2C2f",
+    "CBAM", # 新增CBAM模块  
+    "C3CBAM", # 新增C3CBAM模块
 )

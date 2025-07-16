@@ -52,8 +52,6 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
-    "C3CBAM",  # 新增C3CBAM模块
-    "CBAM",  # 新增CBAM模块
 )
 
 
@@ -124,11 +122,11 @@ class HGStem(nn.Module):
             c2 (int): Output channels.
         """
         super().__init__()
-        self.stem1 = Conv(c1, cm, 3, 2, act=nn.SiLU())
-        self.stem2a = Conv(cm, cm // 2, 2, 1, 0, act=nn.SiLU())
-        self.stem2b = Conv(cm // 2, cm, 2, 1, 0, act=nn.SiLU())
-        self.stem3 = Conv(cm * 2, cm, 3, 2, act=nn.SiLU())
-        self.stem4 = Conv(cm, c2, 1, 1, act=nn.SiLU())
+        self.stem1 = Conv(c1, cm, 3, 2, act=nn.ReLU())
+        self.stem2a = Conv(cm, cm // 2, 2, 1, 0, act=nn.ReLU())
+        self.stem2b = Conv(cm // 2, cm, 2, 1, 0, act=nn.ReLU())
+        self.stem3 = Conv(cm * 2, cm, 3, 2, act=nn.ReLU())
+        self.stem4 = Conv(cm, c2, 1, 1, act=nn.ReLU())
         self.pool = nn.MaxPool2d(kernel_size=2, stride=1, padding=0, ceil_mode=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -161,7 +159,7 @@ class HGBlock(nn.Module):
         n: int = 6,
         lightconv: bool = False,
         shortcut: bool = False,
-        act: nn.Module = nn.SiLU(),
+        act: nn.Module = nn.ReLU(),
     ):
         """
         Initialize HGBlock with specified parameters.
@@ -284,7 +282,8 @@ class C2(nn.Module):
         self.c = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv(2 * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.Sequential(*(Bottleneck(self.c, self.c, shortcut, g, k=(3, 3), e=1.0) for _ in range(n)))
+        # self.attention = ChannelAttention(2 * self.c)  # or SpatialAttention()
+        self.m = nn.Sequential(*(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n)))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the CSP bottleneck with 2 convolutions."""
@@ -311,7 +310,7 @@ class C2f(nn.Module):
         self.c = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=(3, 3), e=1.0) for _ in range(n))
+        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through C2f layer."""
@@ -347,7 +346,7 @@ class C3(nn.Module):
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
         self.cv3 = Conv(2 * c_, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, k=(1, 1), e=1.0) for _ in range(n)))
+        self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, k=((1, 1), (3, 3)), e=1.0) for _ in range(n)))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the CSP bottleneck with 3 convolutions."""
@@ -371,7 +370,7 @@ class C3x(C3):
         """
         super().__init__(c1, c2, n, shortcut, g, e)
         self.c_ = int(c2 * e)
-        self.m = nn.Sequential(*(Bottleneck(self.c_, self.c_, shortcut, g, k=(1, 3), e=1) for _ in range(n)))
+        self.m = nn.Sequential(*(Bottleneck(self.c_, self.c_, shortcut, g, k=((1, 3), (3, 1)), e=1) for _ in range(n)))
 
 
 class RepC3(nn.Module):
@@ -672,7 +671,7 @@ class C2fAttn(nn.Module):
         self.c = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((3 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=(3, 3), e=1.0) for _ in range(n))
+        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
         self.attn = MaxSigmoidAttnBlock(self.c, self.c, gc=gc, ec=ec, nh=nh)
 
     def forward(self, x: torch.Tensor, guide: torch.Tensor) -> torch.Tensor:
@@ -2032,50 +2031,3 @@ class SAVPE(nn.Module):
         aggregated = score.transpose(-2, -3) @ x.reshape(B, self.c, C // self.c, -1).transpose(-1, -2)
 
         return F.normalize(aggregated.transpose(-2, -3).reshape(B, Q, -1), dim=-1, p=2)
-
-
-# ------------------ 新增CBAM模块和C3CBAM模块 ------------------
-class CBAM(nn.Module):
-    """通道和空间注意力模块 CBAM"""
-    def __init__(self, channels, reduction=16, kernel_size=7):
-        super().__init__()
-        # 通道注意力
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        self.fc1 = nn.Conv2d(channels, channels // reduction, 1, bias=False)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Conv2d(channels // reduction, channels, 1, bias=False)
-        self.sigmoid_channel = nn.Sigmoid()
-        # 空间注意力
-        self.conv_spatial = nn.Conv2d(2, 1, kernel_size, padding=kernel_size // 2, bias=False)
-        self.sigmoid_spatial = nn.Sigmoid()
-
-    def forward(self, x):
-        # 通道注意力
-        avg_out = self.fc2(self.relu(self.fc1(self.avg_pool(x))))
-        max_out = self.fc2(self.relu(self.fc1(self.max_pool(x))))
-        channel_att = self.sigmoid_channel(avg_out + max_out)
-        x = x * channel_att
-        # 空间注意力
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        spatial_att = self.sigmoid_spatial(self.conv_spatial(torch.cat([avg_out, max_out], dim=1)))
-        x = x * spatial_att
-        return x
-
-class C3CBAM(nn.Module):
-    def __init__(self, c1, c2, n, shortcut, g, e):
-        print(f"C3CBAM: c1={c1}, c2={c2}, n={n}, shortcut={shortcut}, g={g}, e={e}")
-        c_ = int(c2 * e)
-        print(f"C3CBAM: c_={c_}")
-        super().__init__()
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = Conv(c1, c_, 1, 1)
-        self.cv3 = Conv(2 * c_, c2, 1)
-        self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, k=(1, 1), e=1.0) for _ in range(n)))
-        self.cbam = CBAM(c2)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), 1))
-        out = self.cbam(out)
-        return out
